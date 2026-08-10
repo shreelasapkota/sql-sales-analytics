@@ -1,0 +1,14 @@
+# Raw CSVs are downloaded by scripts/load_data.py, never committed.
+# The full dataset is ~126 MB, dominated by geolocation (61 MB).
+data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# EXPLAIN ANALYZE scratch output
+*.explain.out
+
+# macOS
+.DS_Store
