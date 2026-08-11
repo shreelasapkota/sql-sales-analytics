@@ -108,7 +108,8 @@ ORDER BY order_date, order_id;
 --   partition exactly one row and every "running total" would equal that single
 --   order. This is the single easiest way to get this dataset wrong.
 --
---   Repeat buyers are rare here: 90,557 of 93,357 people ordered exactly once.
+--   Repeat buyers are rare here: 90,557 of 93,358 people (97.0%) ordered exactly
+--   once, counting delivered orders only.
 --   The filter keeps the output meaningful, since a running total over one row
 --   demonstrates nothing.
 -- -----------------------------------------------------------------------------
