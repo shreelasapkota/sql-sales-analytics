@@ -260,17 +260,35 @@ series AS (
 SELECT
     to_char(month, 'YYYY-MM') AS month,
     ROUND(revenue, 2)         AS revenue_brl,
-    ROUND(AVG(revenue) OVER (ORDER BY month
-              ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS ma_3mo,
-    ROUND(AVG(revenue) OVER (ORDER BY month
-              ROWS BETWEEN 5 PRECEDING AND CURRENT ROW), 2) AS ma_6mo,
-    -- Deviation from the 3-month trend. Positive means the month outperformed
-    -- its own recent baseline, which is what "broke trend" actually means.
-    ROUND(100.0 * (revenue - AVG(revenue) OVER (ORDER BY month
-              ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
-        / NULLIF(AVG(revenue) OVER (ORDER BY month
-              ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 0), 1) AS pct_vs_ma_3mo
+    -- WARM-UP GUARD. A trailing frame is PARTIAL until enough rows exist behind
+    -- it: on row 1, `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` sees exactly one
+    -- row, so AVG returns that month's own revenue. Printing that under a column
+    -- called ma_3mo is the same silent mislabelling this file keeps warning
+    -- about. COUNT(*) over the identical frame reports how many rows the average
+    -- actually covered, and NULL is returned until the window is full.
+    CASE WHEN COUNT(*) OVER w3 = 3
+         THEN ROUND(AVG(revenue) OVER w3, 2) END AS ma_3mo,
+    CASE WHEN COUNT(*) OVER w6 = 6
+         THEN ROUND(AVG(revenue) OVER w6, 2) END AS ma_6mo,
+    -- Deviation from the PRIOR three months, not from a window containing the
+    -- current month. The frame `ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING` stops
+    -- one row short of the current row, so the baseline is genuinely
+    -- independent of the value being judged against it.
+    --
+    -- The earlier version used the ma_3mo frame, which includes the current
+    -- month as one third of its own denominator. That structurally compresses
+    -- every deviation: February 2017 grew +109.5% over January (see Q2) but
+    -- scored only +35.4% against a baseline it was itself inflating, and
+    -- January 2017 scored exactly 0.0 — a value divided by itself, reading as
+    -- "perfectly on trend" when there was no trend data at all.
+    CASE WHEN COUNT(*) OVER w_trailing = 3
+         THEN ROUND(100.0 * (revenue - AVG(revenue) OVER w_trailing)
+                  / NULLIF(AVG(revenue) OVER w_trailing, 0), 1) END
+                              AS pct_vs_prior_3mo
 FROM series
+WINDOW w3         AS (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
+       w6         AS (ORDER BY month ROWS BETWEEN 5 PRECEDING AND CURRENT ROW),
+       w_trailing AS (ORDER BY month ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING)
 ORDER BY month;
 
 
@@ -408,16 +426,43 @@ compared AS (
     FROM category_quarter
     GROUP BY category
 )
+-- The business question asks which categories are growing AND which are
+-- shrinking. An earlier version ordered by growth descending with a LIMIT,
+-- which made declining categories structurally unreachable — it could only ever
+-- answer half its own question, and returned 15 rows of positive growth that
+-- looked like a complete picture. 13 categories did in fact decline.
+--
+-- Ranking from both ends and keeping the extremes answers both halves. The
+-- ranks are computed over the full filtered set BEFORE the outer filter runs,
+-- which is the same evaluation-order rule as everywhere else in this project.
+, ranked AS (
+    SELECT
+        category,
+        q2_2017,
+        q2_2018,
+        q2_2018 - q2_2017 AS abs_change,
+        RANK() OVER (ORDER BY (q2_2018 - q2_2017) DESC) AS growth_rank,
+        RANK() OVER (ORDER BY (q2_2018 - q2_2017) ASC)  AS decline_rank
+    FROM compared
+    -- Require meaningful volume in BOTH quarters: a category that did 200 BRL
+    -- last year and 2,000 this year shows +900% and tells you nothing.
+    WHERE q2_2017 >= 20000
+      AND q2_2018 >= 20000
+)
 SELECT
+    -- Labelled by the SIGN of the change, not by which rank bucket the row came
+    -- from. Ranking into a "bottom 5" and calling that bucket "shrinking" was
+    -- wrong: only 2 categories above the volume threshold actually declined, so
+    -- the bottom 5 also swept up toys (+49.9%) and perfumery (+8.7%) and
+    -- labelled genuine growth as decline.
+    CASE WHEN abs_change > 0 THEN 'growing' ELSE 'shrinking' END AS direction,
     category,
     ROUND(q2_2017, 2) AS q2_2017_brl,
     ROUND(q2_2018, 2) AS q2_2018_brl,
-    ROUND(100.0 * (q2_2018 - q2_2017) / NULLIF(q2_2017, 0), 1) AS yoy_pct,
-    RANK() OVER (ORDER BY (q2_2018 - q2_2017) DESC)            AS growth_rank
-FROM compared
--- Require meaningful volume in BOTH quarters: a category that did 200 BRL last
--- year and 2,000 this year shows +900% and tells you nothing.
-WHERE q2_2017 >= 20000
-  AND q2_2018 >= 20000
-ORDER BY (q2_2018 - q2_2017) DESC
-LIMIT 15;
+    ROUND(abs_change, 2) AS change_brl,
+    ROUND(100.0 * abs_change / NULLIF(q2_2017, 0), 1) AS yoy_pct,
+    growth_rank
+FROM ranked
+WHERE growth_rank <= 10
+   OR decline_rank <= 5
+ORDER BY abs_change DESC;

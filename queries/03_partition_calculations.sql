@@ -55,9 +55,25 @@
 --   that they agree on the FINAL row, which is what makes this so easy to miss:
 --   a spot-check of the last value passes, and only the intermediate rows lie.
 --
---   The deeper fix is a deterministic ORDER BY. Adding order_id as a tiebreak
---   removes the ties entirely, so RANGE and ROWS converge. Ordering by something
---   unique is the real defence; the explicit frame is the safety net.
+--   AN IMPORTANT CAVEAT ABOUT explicit_rows ITSELF
+--   The explicit_rows column is guaranteed to ACCUMULATE, and guaranteed to end
+--   at 58.40. It is NOT guaranteed to produce the specific sequence
+--   9.90, 16.80, 26.70, ... because its window orders only by order_date, and
+--   all six rows tie on that date. Which peer is processed first is left
+--   unspecified by the standard and chosen by the planner.
+--
+--   In this query it looks stable only by accident: EXPLAIN shows PostgreSQL
+--   reusing a single `Sort Key: order_date, order_id` — a sort demanded by the
+--   THIRD column — to feed all three window aggregates. Remove or change
+--   unique_order_by and the tie order is free to differ from the display order,
+--   at which point the "correct" column can read non-monotonically.
+--
+--   So an explicit frame alone is not sufficient. The real fix is a
+--   deterministic ORDER BY: adding order_id as a tiebreak removes the ties
+--   entirely, at which point RANGE and ROWS converge and the result no longer
+--   depends on the plan. That is what unique_order_by demonstrates, and it is
+--   the column worth copying into real code. The explicit frame is the safety
+--   net; a unique ordering is the actual defence.
 -- -----------------------------------------------------------------------------
 \echo '=== Q1. Default RANGE frame vs explicit ROWS on tied dates ==='
 
@@ -129,7 +145,15 @@ WITH customer_orders AS (
     GROUP BY 1, 2, 3
 ),
 repeat_customers AS (
-    SELECT customer_unique_id
+    -- Ranked by order count, because the report claims to show the MOST
+    -- FREQUENT repeat buyers. An earlier version selected them with
+    -- `ORDER BY customer_unique_id LIMIT 3`, which was reproducible but
+    -- alphabetical — it returned customers with 6, 7 and 5 orders while the
+    -- genuine top buyers (15 orders and 9 orders) never appeared at all.
+    -- Deterministic and wrong is still wrong.
+    SELECT
+        customer_unique_id,
+        COUNT(*) AS order_count
     FROM customer_orders
     GROUP BY customer_unique_id
     HAVING COUNT(*) >= 5
@@ -157,7 +181,7 @@ sequenced AS (
               / SUM(co.order_revenue) OVER (PARTITION BY co.customer_unique_id), 1)
                                                     AS pct_of_lifetime
     FROM customer_orders co
-    JOIN repeat_customers rc USING (customer_unique_id)
+    JOIN repeat_customers rc ON rc.customer_unique_id = co.customer_unique_id
     WINDOW w AS (PARTITION BY co.customer_unique_id
                  ORDER BY co.ordered_at, co.order_id)
 )
@@ -170,13 +194,14 @@ SELECT
     days_since_prev,
     pct_of_lifetime
 FROM sequenced
--- ORDER BY inside the subquery matters: a bare LIMIT has no defined ordering,
--- so PostgreSQL may return different customers between runs and the output
--- would not be reproducible.
+-- Ordered by order_count DESC to match what this report claims to show, with
+-- customer_unique_id as a tiebreak so the selection is also reproducible: a bare
+-- LIMIT has no defined ordering and could return different customers per run.
+-- Both properties are needed — sorting on the right thing AND sorting stably.
 WHERE customer_unique_id IN (
         SELECT customer_unique_id
         FROM repeat_customers
-        ORDER BY customer_unique_id
+        ORDER BY order_count DESC, customer_unique_id
         LIMIT 3
       )
 ORDER BY customer_unique_id, order_seq;
