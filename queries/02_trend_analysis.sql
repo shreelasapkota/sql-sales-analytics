@@ -390,10 +390,14 @@ WITH category_quarter AS (
            ON t.product_category_name = p.product_category_name
     WHERE o.order_status = 'delivered'
       AND p.product_category_name IS NOT NULL
-      -- Both full quarters being compared, and nothing in between, so LAG(,4)
-      -- is not needed and the comparison stays explicit.
-      AND o.order_purchase_timestamp >= '2017-04-01'
-      AND o.order_purchase_timestamp <  '2018-07-01'
+      -- Only the two quarters actually being compared are scanned. A single
+      -- range from 2017-04 to 2018-07 would also read the four quarters in
+      -- between, aggregate them, and then discard them in the FILTER below —
+      -- correct, but reading roughly three times the rows for no benefit.
+      AND (   (o.order_purchase_timestamp >= '2017-04-01'
+           AND o.order_purchase_timestamp <  '2017-07-01')
+           OR (o.order_purchase_timestamp >= '2018-04-01'
+           AND o.order_purchase_timestamp <  '2018-07-01'))
     GROUP BY 1, 2
 ),
 compared AS (

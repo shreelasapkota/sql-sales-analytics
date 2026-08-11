@@ -140,9 +140,10 @@ sequenced AS (
         co.ordered_at,
         co.order_revenue,
         ROW_NUMBER() OVER w                         AS order_seq,
-        SUM(co.order_revenue) OVER (PARTITION BY co.customer_unique_id
-                                    ORDER BY co.ordered_at, co.order_id
-                                    ROWS UNBOUNDED PRECEDING)
+        -- `OVER (w ROWS ...)` reuses the named window's PARTITION BY and
+        -- ORDER BY while adding a frame, so the spec is written once. Repeating
+        -- it inline invites the two copies to drift apart during edits.
+        SUM(co.order_revenue) OVER (w ROWS UNBOUNDED PRECEDING)
                                                     AS cumulative_brl,
         -- Days since this customer's previous order. LAG is confined to the
         -- partition, so the first order of each customer correctly yields NULL
