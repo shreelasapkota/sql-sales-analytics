@@ -297,7 +297,15 @@ thresholds AS (
         p.*,
         -- Flag the first row to cross each threshold by comparing against the
         -- previous row's cumulative share.
-        LAG(cumulative_pct) OVER (ORDER BY seller_rank) AS prev_pct
+        --
+        -- COALESCE(..., 0) is load-bearing. The first row has no predecessor, so
+        -- LAG returns NULL, and `NULL < 25` evaluates to NULL rather than true —
+        -- meaning the row would NOT be selected. On this data the top seller
+        -- holds only 1.7% so no threshold is crossed at row 1 and the bug stays
+        -- invisible, but on a more concentrated marketplace the 25% row would
+        -- silently vanish from the report. Treating "no previous row" as 0%
+        -- makes the comparison correct at the boundary.
+        COALESCE(LAG(cumulative_pct) OVER (ORDER BY seller_rank), 0) AS prev_pct
     FROM pareto p
 )
 SELECT
