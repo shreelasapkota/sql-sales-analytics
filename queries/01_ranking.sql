@@ -96,12 +96,33 @@ SELECT
     LEFT(product_id, 8)          AS product,
     units_sold,
     ROUND(revenue, 2)            AS revenue_brl,
-    ROW_NUMBER() OVER (ORDER BY units_sold DESC) AS row_number,
-    RANK()       OVER (ORDER BY units_sold DESC) AS rank,
-    DENSE_RANK() OVER (ORDER BY units_sold DESC) AS dense_rank
+    -- ROW_NUMBER gets an explicit tiebreak; RANK and DENSE_RANK deliberately do
+    -- not. See the note below on why they differ.
+    ROW_NUMBER() OVER (ORDER BY units_sold DESC, product_id) AS row_number,
+    RANK()       OVER (ORDER BY units_sold DESC)             AS rank,
+    DENSE_RANK() OVER (ORDER BY units_sold DESC)             AS dense_rank
 FROM product_units
-ORDER BY units_sold DESC
+ORDER BY units_sold DESC, product_id
 LIMIT 8;
+
+-- WHY ROW_NUMBER HAS A TIEBREAK HERE AND THE OTHER TWO DO NOT
+--   This query originally ordered all three by units_sold alone. Running the
+--   file repeatedly proved the point it was making: the two products tied at 68
+--   units SWAPPED POSITIONS between runs, and their row_number values swapped
+--   with them. The documented output above stopped matching what the file
+--   printed.
+--
+--   Adding `product_id` to ROW_NUMBER's ORDER BY makes the tiebreak explicit and
+--   the result reproducible. It is added ONLY to ROW_NUMBER, because adding it
+--   to RANK or DENSE_RANK would make every row unique and destroy the ties this
+--   query exists to demonstrate.
+--
+--   That asymmetry is the practical lesson. RANK and DENSE_RANK are
+--   deterministic in their VALUES whatever the peer order, because tied rows
+--   share a rank by definition. ROW_NUMBER is not: it must hand out distinct
+--   numbers, so with no tiebreak the database picks arbitrarily and may pick
+--   differently on the next execution. If a report paginates or diffs on
+--   ROW_NUMBER, give it a unique tiebreak or the results will not be stable.
 
 
 -- -----------------------------------------------------------------------------
