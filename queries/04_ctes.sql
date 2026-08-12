@@ -133,14 +133,25 @@ FROM per_customer_id;
 --   honestly, even though the buckets come out wildly uneven — which is itself
 --   the finding.
 --
---   MATERIALIZED is applied to the shared CTE because it is referenced twice
---   below. Without it PostgreSQL may inline and recompute the whole aggregation
---   for each reference.
+--   NOTE ON MATERIALIZED, AND WHY IT IS *NOT* USED HERE
+--   An earlier version of this query marked the first CTE AS MATERIALIZED,
+--   justified by a comment saying it was "referenced twice". It is not — each
+--   CTE below is referenced exactly once, in a straight chain:
+--       order_revenue -> per_person -> segmented -> final SELECT
+--
+--   With a single reference, MATERIALIZED can only hurt: it forces PostgreSQL to
+--   build the full intermediate result instead of inlining the CTE and pushing
+--   predicates down into it. The hint was removed.
+--
+--   MATERIALIZED earns its place when an EXPENSIVE CTE is referenced MORE THAN
+--   ONCE, since the inlined form may recompute it per reference. That is a real
+--   pattern, just not this query's. Adding optimizer hints on the strength of a
+--   plausible-sounding reason rather than a plan is how queries get slower.
 -- -----------------------------------------------------------------------------
 \echo ''
 \echo '=== Q2. Customer value segments ==='
 
-WITH order_revenue AS MATERIALIZED (
+WITH order_revenue AS (
     SELECT
         c.customer_unique_id,
         o.order_id,
