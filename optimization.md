@@ -1,39 +1,52 @@
 # Query Optimization
 
-Three optimization attempts on the heaviest queries in this project, measured
-with `EXPLAIN (ANALYZE, BUFFERS)` on PostgreSQL 17.
+Four optimization attempts on the heaviest queries in this project, measured with
+`EXPLAIN (ANALYZE, BUFFERS)` on PostgreSQL 17.
 
-**Two of the three failed.** Both failures are kept here, because "I added an
-index and the planner ignored it" is a more useful thing to understand than a
-list of wins — and because deleting the failures would misrepresent how
-optimization actually goes.
+**Two of the four failed.** Both failures are kept here, because "I added an
+index and the planner ignored it" is more useful to understand than a list of
+wins — and because deleting them would misrepresent how optimization actually
+goes.
 
 ## Method
 
-Every figure below is the **best of 5 runs** of `EXPLAIN (ANALYZE, BUFFERS)`.
-Best-of rather than average, because the first run pays for a cold cache and
-averaging it in measures disk warm-up rather than the query.
+Each query was run **five times** and every run is printed below. The headline
+figure is the **median**, not the best.
+
+That choice matters, and an earlier draft of this document got it wrong. Using
+best-of-N produced a "before" figure faster than a run observed elsewhere in the
+same document — an impossible result that came from comparing numbers taken in
+different cache states. Printing all five runs makes that class of error visible
+instead of hiding it behind a single number.
+
+The first run of each set is consistently the slowest (354 ms vs a 117 ms
+median in optimization 1). That is cold-cache warm-up, not the query.
+
+**Plan excerpts below quote structure — node types, row counts, cost estimates —
+not timings.** Timings come only from the five-run tables. Mixing the two is what
+produced the contradiction in the earlier draft, because a plan captured right
+after a `CREATE INDEX` runs against a cold cache and is not comparable to a
+warm-state median.
 
 All tables were `ANALYZE`d before measuring. Without current statistics the
-planner works from stale row estimates and its choices say nothing useful.
+planner works from stale estimates and its choices say nothing useful.
 
-> These timings come from a laptop with the whole 1.5M-row dataset comfortably
-> in RAM (`Buffers: shared hit=...`, almost no `read=`). Absolute numbers on a
-> disk-bound server would differ substantially. The *shape* of each result — what
-> the planner chose and why — is what transfers.
+> These timings come from a laptop with the 1.5M-row dataset comfortably in RAM.
+> Absolute numbers on a disk-bound server would differ substantially. The *shape*
+> of each result — what the planner chose and why — is what transfers.
 
 ## Summary
 
-| # | Change | Before | After | Result |
+| # | Change | Before (median) | After (median) | Result |
 |---|---|---:|---:|---|
-| 1 | Materialise geolocation centroids | 110.1 ms | 34.4 ms | **3.2× faster** |
-| 2 | Index `customers.customer_unique_id` | 6.965 ms | 0.563 ms | **12.4× faster** |
-| 3 | Partial index on `orders(purchase_ts) WHERE delivered` | 49.4 ms | 50.3 ms | **No effect — dropped** |
-| 4 | Covering index `order_items(seller_id) INCLUDE (price)` | 35.5 ms | 34.8 ms | **No effect — dropped** |
+| 1 | Materialise geolocation centroids | 117.3 ms | 38.8 ms | **3.0× faster** |
+| 2 | Index `customers.customer_unique_id` | 6.22 ms | 0.568 ms | **11.0× faster** |
+| 3 | Partial index on `orders(purchase_ts) WHERE delivered` | 61.6 ms | 60.2 ms | **Ignored — dropped** |
+| 4 | Covering index `order_items(seller_id) INCLUDE (price)` | 36.6 ms | 41.1 ms | **Ignored — dropped** |
 
 ---
 
-## 1. Materialising the geolocation centroids — 3.2× faster
+## 1. Materialising the geolocation centroids — 3.0× faster
 
 ### The problem
 
@@ -43,23 +56,27 @@ duplicates. It has no primary key, because the raw data has no unique column.
 
 Any query needing coordinates had to aggregate all million rows first.
 
-### Before
+### Measurements
+
+| Run | 1 | 2 | 3 | 4 | 5 | Median |
+|---|---:|---:|---:|---:|---:|---:|
+| Before | 354.7 | 173.8 | 108.9 | 117.3 | 110.1 | **117.3 ms** |
+| After | 49.1 | 33.0 | 38.8 | 51.4 | 33.2 | **38.8 ms** |
+
+### Plan, before
 
 ```
 ->  Finalize HashAggregate  (cost=17527.05..17651.23 rows=12418 width=22)
-      (actual time=207.253..208.251 rows=19015 loops=1)
-      Buffers: shared hit=929 read=7719
+      (actual rows=19015 loops=1)
+      ->  Partial HashAggregate  (cost=13857.18..13981.36 rows=12418 width=6)
+            (actual rows=14649 loops=3)
+            ->  Parallel Seq Scan on geolocation
+                  (cost=0.00..12815.35 rows=416735 width=6)
+                  (actual rows=333388 loops=3)
 ```
 
-Two things to read here. The aggregation alone takes **207 ms** to produce
-19,015 rows — and it did that on every execution.
-
-The `read=7719` matters too: 7,719 blocks pulled from disk rather than found in
-cache. `geolocation` is too large to stay resident alongside everything else.
-
-Note also the estimate: the planner guessed 12,418 groups and got 19,015. Not a
-disaster, but a reminder that estimates on a table with no statistics-friendly
-key are approximate.
+Three parallel workers scan a million rows and aggregate them down to 19,015 —
+on every execution.
 
 ### The change
 
@@ -67,22 +84,23 @@ key are approximate.
 CREATE MATERIALIZED VIEW geolocation_centroid AS
 SELECT geolocation_zip_code_prefix AS zip,
        AVG(geolocation_lat) AS lat,
-       AVG(geolocation_lng) AS lng
+       AVG(geolocation_lng) AS lng,
+       COUNT(*)             AS source_rows
 FROM geolocation GROUP BY 1;
 
 CREATE UNIQUE INDEX idx_geo_centroid_zip ON geolocation_centroid (zip);
 ```
 
-### After
+### Plan, after
 
 ```
-->  Seq Scan on geolocation_centroid cg  (cost=0.00..318.15 rows=19015 width=6)
-      (actual time=0.042..6.980 rows=19015 loops=2)
+->  Seq Scan on geolocation_centroid cg  (cost=0.00..330.15 rows=19015 width=6)
+      (actual rows=19015 loops=2)
 ```
 
-The 207 ms aggregation is gone entirely, replaced by a 7 ms scan of a small
-table. The estimate is now exact — 19,015 predicted, 19,015 actual — because the
-row count is a stored fact rather than a guess.
+The parallel aggregation is gone. Cost drops from 17,527 to 330 — a 53× drop in
+the planner's own arithmetic, which is almost exactly the row-multiplication
+factor of the raw table.
 
 | | Rows | Size |
 |---|---:|---:|
@@ -96,27 +114,26 @@ single time it ran*. The work never changed, so doing it once and storing the
 answer removes it entirely.
 
 The secondary win is size. 68 MB does not stay resident in cache alongside
-everything else; 1.5 MB does. That is why the `read=` blocks disappear — after
-the first run the whole thing lives in memory.
+everything else; 1.5 MB does.
 
-The `UNIQUE` index does more than enforce correctness. It tells the planner that
-at most one row can match a given zip, which sharpens its row estimates for
-every join against it.
+Note the estimate also became exact — 19,015 predicted, 19,015 actual, versus
+12,418 predicted before. Better estimates lead to better join decisions
+downstream.
 
 **The trade-off is staleness.** A materialised view is a stored snapshot. If
-`geolocation` changed, this would silently serve old coordinates until
-`REFRESH MATERIALIZED VIEW` ran. For a static dataset that cost is zero; on live
-data it would need a refresh schedule, and that is a real operational burden, not
-a free win.
+`geolocation` changed, this would serve old coordinates until `REFRESH
+MATERIALIZED VIEW` ran. For a static dataset that cost is zero; on live data it
+needs a refresh schedule, which is a real operational burden.
 
 **This is also a correctness fix, not only a speed one.** Joining `geolocation`
 directly multiplies revenue by ~154× (13.2M → 2.03bn, see `05_joins.sql` Q3).
-The centroid view makes the join 1:1, so the fast path and the correct path are
-now the same path.
+The centroid view makes the join 1:1 by construction, so the fast path and the
+correct path are now the same path — and `queries/05_joins.sql` Q3 joins the
+view rather than the raw table.
 
 ---
 
-## 2. Indexing `customer_unique_id` — 12.4× faster
+## 2. Indexing `customer_unique_id` — 11.0× faster
 
 ### The problem
 
@@ -125,39 +142,38 @@ lifetime-value query, but had no index. Only `customer_id` — the primary key �
 was indexed, and that is the *wrong* column for these questions.
 
 The test query pulls one customer's full order history. That customer holds 17
-rows in `customers` — one per order placed — which is the whole point of the
+rows in `customers`, one per order placed, which is the whole point of the
 `customer_id` vs `customer_unique_id` distinction.
 
-### Before
+### Measurements
+
+| Run | 1 | 2 | 3 | 4 | 5 | Median |
+|---|---:|---:|---:|---:|---:|---:|
+| Before | 20.24 | 6.22 | 6.15 | 6.27 | 6.19 | **6.22 ms** |
+| After | 0.568 | 0.560 | 0.740 | 0.629 | 0.568 | **0.568 ms** |
+
+### Plan, before
 
 ```
-->  Seq Scan on customers c  (cost=0.00..2747.01 rows=17 width=66)
-      (actual time=0.933..5.997 rows=17 loops=1)
-Execution Time: 6.642 ms
+->  Seq Scan on customers c  (cost=0.00..2747.01 rows=20 width=66)
+      (actual rows=17 loops=1)
 ```
 
 All 99,441 rows read to find 17.
 
-### After
+### Plan, after
 
 ```
 ->  Index Scan using idx_customers_unique_id on customers c
-      (cost=0.42..8.44 rows=1 width=66)
-      (actual time=0.034..0.063 rows=17 loops=1)
-Execution Time: 0.720 ms
+      (cost=0.42..8.44 rows=1 width=66) (actual rows=17 loops=1)
 ```
 
-The plan excerpts above are from a single representative run; the summary table
-quotes best-of-5 for both, which is where the 12.4× figure comes from.
-
-Note the cost estimate drops from 2747.01 to 8.44 — the planner's own arithmetic
-for why it switched.
+Cost falls from 2,747 to 8.44 — the planner's own reasoning for switching.
 
 ### Why it got faster
 
-A sequential scan reads every row and tests each one. A B-tree index descends
-directly to the matching entries — a handful of page reads instead of 99,441 row
-comparisons.
+A sequential scan reads every row and tests each. A B-tree index descends
+directly to the matching entries.
 
 **This only works because the query is selective.** One customer out of 96,096
 is roughly 0.001% of the table. That is exactly the shape where an index wins,
@@ -170,7 +186,7 @@ and it sets up the next two results.
 ### The attempt
 
 Every analytical query filters `order_status = 'delivered'`, and the trend
-queries add a date range. That looks like a textbook case for a partial index:
+queries add a date range. That looks like a textbook partial index:
 
 ```sql
 CREATE INDEX idx_orders_delivered_purchased
@@ -178,20 +194,21 @@ CREATE INDEX idx_orders_delivered_purchased
     WHERE order_status = 'delivered';
 ```
 
-### The result
+### Measurements
 
-| | Time |
-|---|---:|
-| Before | 49.437 ms |
-| After | 50.323 ms |
+| Run | 1 | 2 | 3 | 4 | 5 | Median |
+|---|---:|---:|---:|---:|---:|---:|
+| Before | 97.0 | 50.5 | 61.6 | 66.6 | 59.7 | **61.6 ms** |
+| After | 61.7 | 51.9 | 60.7 | 50.7 | 60.2 | **60.2 ms** |
 
-The planner **ignored it completely** and kept the sequential scan:
+A 1.4 ms difference against a 10 ms spread between runs — indistinguishable from
+noise. The planner ignored the index entirely:
 
 ```
-Seq Scan on orders o  (cost=0.00..3580.22 rows=51278) (actual rows=52783)
+->  Seq Scan on orders o  (cost=0.00..3580.22 rows=51603) (actual rows=52783)
 ```
 
-`pg_stat_user_indexes` confirmed it: `idx_scan = 0`.
+`pg_stat_user_indexes` confirmed it: **`idx_scan = 0`**.
 
 ### Why the planner was right
 
@@ -208,10 +225,10 @@ sequential scan usually wins.** At 53% it is not close.
 There is a second reason specific to this data. `order_status = 'delivered'`
 matches 96,478 of 99,441 rows — **97% of the table**. A partial index that
 excludes almost nothing is close to a full index, so it saves neither space nor
-work.
+maintenance work.
 
-The index was dropped. It occupied 2.1 MB and had to be updated on every write
-to `orders`, in exchange for never being used.
+Dropped. It occupied 2.1 MB and had to be updated on every write to `orders`, in
+exchange for never being used.
 
 ---
 
@@ -219,26 +236,26 @@ to `orders`, in exchange for never being used.
 
 ### The attempt
 
-Seller revenue aggregation is used by both the ranking and the Pareto queries. A
-covering index should allow an **index-only scan**, where PostgreSQL answers
-entirely from the index without touching the table:
+Seller revenue aggregation is used by both the ranking and Pareto queries. A
+covering index should allow an **index-only scan**:
 
 ```sql
 CREATE INDEX idx_order_items_seller_covering
     ON order_items (seller_id) INCLUDE (price);
 ```
 
-### The result
+### Measurements
 
-| | Time |
-|---|---:|
-| Before | 35.481 ms |
-| After | 34.773 ms |
+| Run | 1 | 2 | 3 | 4 | 5 | Median |
+|---|---:|---:|---:|---:|---:|---:|
+| Before | 36.6 | 47.1 | 36.4 | 34.9 | 45.4 | **36.6 ms** |
+| After | 41.1 | 46.8 | 34.6 | 36.3 | 48.9 | **41.1 ms** |
 
-Within run-to-run noise, and again `idx_scan = 0`:
+The "after" median is *slower*, though both sit inside a ~14 ms run-to-run
+spread, so the honest reading is no measurable difference. Again **`idx_scan = 0`**:
 
 ```
-Parallel Seq Scan on order_items oi  (actual rows=56325 loops=2)
+->  Parallel Seq Scan on order_items oi  (actual rows=56325 loops=2)
 ```
 
 ### Why it did not work
@@ -252,32 +269,33 @@ There is a second flaw in the index itself. The query joins `order_items` to
 index-only scan requires *every* referenced column to be present, so PostgreSQL
 would have had to visit the heap anyway — losing the only advantage on offer.
 
-The index was dropped. It cost 6.5 MB and slowed every write to the largest
-table in the database, for nothing.
+Dropped. It cost 6.5 MB and slowed every write to the largest table in the
+database, for nothing.
 
 ---
 
 ## What these four results add up to
 
 **Indexes accelerate selective access. They do nothing for full-table
-aggregation.** Optimizations 3 and 4 failed for the same underlying reason:
-both queries need most of the table, and no index makes reading everything
-faster than reading everything sequentially.
+aggregation.** Optimizations 3 and 4 failed for the same underlying reason: both
+queries need most of the table, and no index makes reading everything faster
+than reading everything sequentially.
 
 The two that worked did so for genuinely different reasons:
+
 - **#2 was selective** — one row in 96,096, exactly what a B-tree is for.
 - **#1 was not an index at all.** It was a structural change that removed
-  repeated work. The largest win here came from asking "why is this computed
-  every time?" rather than "which column should I index?"
+  repeated work. The largest win came from asking "why is this recomputed every
+  time?" rather than "which column should I index?"
 
 **Unused indexes are not free.** They consume space and must be maintained on
-every insert, update and delete. Both failures were dropped rather than left in
-place, and `pg_stat_user_indexes.idx_scan` is how that decision was made
-factually rather than by guessing.
+every write. Both failures were dropped rather than left in place, and
+`pg_stat_user_indexes.idx_scan` is how that decision was made factually rather
+than by guessing.
 
 **Trust the planner, then verify it.** In both failures the planner was correct
 and the index was the mistake. `EXPLAIN ANALYZE` is what distinguishes "the
-planner is being stupid" from "my assumption was wrong" — and here it was
+planner is being stupid" from "my assumption was wrong" — here it was
 consistently the latter.
 
 ---
@@ -291,43 +309,48 @@ which ones.
 
 - **The full-table aggregations become the whole problem.** Queries 3 and 4 are
   fine at 112k rows because scanning them is cheap. At 11M line items, scanning
-  the table for every dashboard refresh is not viable. The fix is not an index —
-  it is **pre-aggregation**: a rollup table of daily revenue per seller per
-  category, maintained incrementally, so the dashboard reads thousands of rows
-  instead of millions.
+  for every dashboard refresh is not viable. The fix is not an index — it is
+  **pre-aggregation**: a rollup table of daily revenue per seller per category,
+  maintained incrementally, so the dashboard reads thousands of rows instead of
+  millions. That is optimization #1's lesson applied more broadly.
 
-- **`order_items` would want partitioning by month.** Most analytical queries
-  filter on a date range. With monthly partitions the planner prunes irrelevant
-  partitions before reading anything, which is the one thing that genuinely
-  turns "scan everything" into "scan a slice". This is also where optimization 3
-  would finally start paying off — a date-range filter that selects 2% of a
-  partitioned table behaves very differently from one selecting 53% of a small one.
+- **`order_items` and `orders` would want partitioning by month.** Most
+  analytical queries filter on a date range. With monthly partitions the planner
+  prunes irrelevant partitions before reading anything, which genuinely turns
+  "scan everything" into "scan a slice". This is also where optimization 3 would
+  finally pay off: a date filter selecting 2% of a partitioned table behaves
+  very differently from one selecting 53% of a small one.
 
 - **The window functions become memory-bound.** Every `SUM() OVER (PARTITION BY
-  ... ORDER BY ...)` sorts its partition. At 100× the sorts spill from memory to
-  disk, and `EXPLAIN` starts reporting `Sort Method: external merge  Disk: ...`
-  instead of `quicksort  Memory:`. Raising `work_mem` for the session helps; past
-  a point the answer is to aggregate before windowing rather than after.
+  ... ORDER BY ...)` sorts its partition. At 100× the sorts spill to disk, and
+  `EXPLAIN` starts reporting `Sort Method: external merge  Disk: ...` instead of
+  `quicksort  Memory:`. Raising `work_mem` helps; past a point the answer is to
+  aggregate before windowing rather than after.
 
 - **The recursive CTE in `04_ctes.sql` degrades badly.** It re-joins the full
-  leaf set on every one of its five passes. At 100× that is five passes over
-  1.9M leaf rows. As noted in that file, `GROUPING SETS` is the better tool for a
-  fixed-depth hierarchy and would do it in a single pass.
+  leaf set on each of its five passes. At 100× that is five passes over 1.9M
+  leaf rows. As that file already notes, `GROUPING SETS` is the better tool for
+  a fixed-depth hierarchy and would do it in one pass.
 
-- **The `COUNT(DISTINCT ...)` calls get expensive.** Exact distinct counts
-  require sorting or hashing every value. Where an approximation is acceptable,
-  `postgres_hll` or similar trades a small error for a very large speedup.
+- **`COUNT(DISTINCT ...)` gets expensive.** Exact distinct counts require sorting
+  or hashing every value. Where approximation is acceptable, `postgres_hll`
+  trades a small error for a large speedup.
+
+- **The haversine distance calculation in `05_joins.sql` Q3** is computed per
+  order-item row. At 100× this is worth precomputing per (seller_zip,
+  customer_zip) pair — there are only ~19,015² possible pairs but far fewer
+  actually occurring, so a cached lookup would beat recalculating trigonometry
+  11M times.
 
 **What does not change:**
 
 - The **geolocation centroid** win gets *better*, not worse. It collapses 1M rows
   to 19k regardless of how much order data exists, because zip codes do not
   multiply when orders do.
-- The **`customer_unique_id` index** stays valuable. Selective lookups are
-  exactly what scales well with a B-tree — the index depth grows only
-  logarithmically.
+- The **`customer_unique_id` index** stays valuable. B-tree depth grows only
+  logarithmically, so selective lookups scale well.
 
 **The honest summary:** the two optimizations that worked here would still work
 at 100×. The two that failed would still fail, for the same reason. What changes
 is that the failures stop being harmless — at this size a full scan costs
-milliseconds, and at 100× the same query shape is what takes the database down.
+milliseconds; at 100× the same query shape is what takes the database down.

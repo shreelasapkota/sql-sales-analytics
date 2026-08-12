@@ -319,12 +319,21 @@ SELECT
     ROUND(100.0 * r.revenue / n.total_revenue, 2) AS pct_of_national
 FROM rolled_up r
 CROSS JOIN national n
--- Follow one branch from the top of the tree to its leaves, so the parent-child
--- relationship is visible: 0 -> 01 -> 011 -> 0111x. Every level's revenue is the
--- sum of its children's.
-WHERE r.node LIKE '011%' OR r.node IN ('0', '01')
-ORDER BY r.depth, r.revenue DESC
-LIMIT 25;
+-- Follow ONE branch from the root down to depth 4, so the parent-child
+-- relationship is visible and verifiable: 0 -> 01 -> 011 -> 0110..0115.
+--
+-- Depth 5 is deliberately excluded from this display. An earlier version
+-- included it under a LIMIT 25, which truncated the leaf set mid-level — the
+-- visible children then summed to less than their parent and the rollup looked
+-- broken when it was merely cut off. Showing complete levels is the difference
+-- between a demonstration and a misleading one.
+--
+-- Read it as: the depth-4 rows sum to node 011, which is one of the children
+-- summing to 01, which is one of the children summing to 0. Q4 asserts the same
+-- property across the whole tree rather than one branch.
+WHERE r.node IN ('0', '01', '011')
+   OR (r.depth = 4 AND r.node LIKE '011%')
+ORDER BY r.depth, r.revenue DESC;
 
 
 -- -----------------------------------------------------------------------------
