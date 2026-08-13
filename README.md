@@ -33,6 +33,14 @@ The asymmetry argues for *accurate* delivery estimates rather than conservative
 ones. Padding every estimate buys almost no goodwill; the entire commercial value
 sits in not missing the date you promised.
 
+**6.77% of delivered orders arrived late** (6,534 of 96,470). That figure is
+lower than it first appears, and the reason is worth reading: `order_estimated_
+delivery_date` is stored at **midnight** for all 99,441 orders, so it records a
+promised *day*, not an instant. Comparing full timestamps classifies an order
+promised for the 10th and delivered at 09:00 *on* the 10th as late — inflating
+the rate to 8.11% and adding 1,292 orders that were never late. All queries here
+compare dates.
+
 **2. Revenue is extremely concentrated: 28 sellers produce a quarter of it.**
 
 Of 2,970 sellers with delivered orders, **28 (0.9%) generate 25% of revenue**,
