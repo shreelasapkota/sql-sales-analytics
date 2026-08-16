@@ -129,7 +129,6 @@ Each file stands alone and prints labelled results.
 | `queries/04_ctes.sql` | Lifetime value, plus a recursive hierarchy walk |
 | `queries/05_joins.sql` | Five-table joins on delivery performance |
 | `optimization.md` | Four optimization attempts, two of which failed |
-| `INTERVIEW_NOTES.md` | Per-query notes on approach and scaling |
 | `docs/erd.md` | ERD from the live catalogue |
 | `docs/design/` | Design decisions and profiling notes |
 
