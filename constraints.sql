@@ -1,5 +1,5 @@
 -- =============================================================================
--- constraints.sql — foreign keys and indexes, applied AFTER the bulk load
+-- constraints.sql: foreign keys and indexes, applied AFTER the bulk load
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Usage:  psql -d olist -f constraints.sql   (run only once data is loaded)
@@ -7,7 +7,7 @@
 -- WHY THIS IS A SEPARATE FILE
 -- ---------------------------
 -- If foreign keys exist during a COPY, PostgreSQL fires a referential-integrity
--- trigger for every inserted row — 1.4M trigger firings across this dataset.
+-- trigger for every inserted row, 1.4M trigger firings across this dataset.
 -- Adding the constraint afterwards instead validates the whole table in one pass,
 -- which can use a hash or merge join over sorted data.
 --
@@ -85,7 +85,7 @@ CREATE INDEX idx_order_reviews_order_id ON order_reviews (order_id);
 -- -----------------------------------------------------------------------------
 -- ANALYZE refreshes the statistics the query planner uses to estimate row counts.
 -- Immediately after a bulk load, those statistics are stale or absent, and the
--- planner will make bad choices — typically nested loops over what it thinks are
+-- planner will make bad choices, typically nested loops over what it thinks are
 -- tiny tables. Running this is what makes the Day 3 EXPLAIN ANALYZE numbers
 -- trustworthy rather than artefacts of a cold catalogue.
 -- -----------------------------------------------------------------------------

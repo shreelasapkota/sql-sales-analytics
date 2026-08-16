@@ -1,5 +1,5 @@
 -- =============================================================================
--- 03_partition_calculations.sql — Running totals and cumulative sums
+-- 03_partition_calculations.sql: Running totals and cumulative sums
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Run:    psql -d olist -f queries/03_partition_calculations.sql
@@ -16,7 +16,7 @@
 --     RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 --
 -- RANGE operates on VALUES, so "current row" means every row sharing the current
--- row's ORDER BY value — all its peers. With duplicate dates, every tied row
+-- row's ORDER BY value, all its peers. With duplicate dates, every tied row
 -- receives the same total, and the running total flattens into a plateau.
 --
 -- What people almost always mean is:
@@ -30,7 +30,7 @@
 
 
 -- -----------------------------------------------------------------------------
--- Query 1 — The default window frame silently breaks running totals
+-- Query 1: The default window frame without warning breaks running totals
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Show a customer's spending accumulating across their order history.
@@ -48,7 +48,7 @@
 --   default_frame_range returns 58.40 on ALL SIX ROWS. Every row is a peer of
 --   every other, so each one sums the entire day. The running total does not run.
 --
---   explicit_rows returns 9.90, 16.80, 26.70, 36.60, 47.50, 58.40 — the actual
+--   explicit_rows returns 9.90, 16.80, 26.70, 36.60, 47.50, 58.40, the actual
 --   accumulation.
 --
 --   Both are "correct" per the standard; only one answers the question. Note
@@ -63,8 +63,8 @@
 --   unspecified by the standard and chosen by the planner.
 --
 --   In this query it looks stable only by accident: EXPLAIN shows PostgreSQL
---   reusing a single `Sort Key: order_date, order_id` — a sort demanded by the
---   THIRD column — to feed all three window aggregates. Remove or change
+--   reusing a single `Sort Key: order_date, order_id`, a sort demanded by the
+--   THIRD column, to feed all three window aggregates. Remove or change
 --   unique_order_by and the tie order is free to differ from the display order,
 --   at which point the "correct" column can read non-monotonically.
 --
@@ -108,7 +108,7 @@ ORDER BY order_date, order_id;
 
 
 -- -----------------------------------------------------------------------------
--- Query 2 — How does a repeat customer's spending accumulate?
+-- Query 2: How does a repeat customer's spending accumulate?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   For customers who ordered more than once, how does their cumulative spend
@@ -148,7 +148,7 @@ repeat_customers AS (
     -- Ranked by order count, because the report claims to show the MOST
     -- FREQUENT repeat buyers. An earlier version selected them with
     -- `ORDER BY customer_unique_id LIMIT 3`, which was reproducible but
-    -- alphabetical — it returned customers with 6, 7 and 5 orders while the
+    -- alphabetical, it returned customers with 6, 7 and 5 orders while the
     -- genuine top buyers (15 orders and 9 orders) never appeared at all.
     -- Deterministic and wrong is still wrong.
     SELECT
@@ -175,7 +175,7 @@ sequenced AS (
         co.ordered_at::date
             - LAG(co.ordered_at::date) OVER w       AS days_since_prev,
         -- Each order's share of everything that customer ever spent. The frame
-        -- is deliberately unbounded in BOTH directions so the denominator is the
+        -- is intentionally unbounded in BOTH directions so the denominator is the
         -- partition total, not the running total.
         ROUND(100.0 * co.order_revenue
               / SUM(co.order_revenue) OVER (PARTITION BY co.customer_unique_id), 1)
@@ -197,7 +197,7 @@ FROM sequenced
 -- Ordered by order_count DESC to match what this report claims to show, with
 -- customer_unique_id as a tiebreak so the selection is also reproducible: a bare
 -- LIMIT has no defined ordering and could return different customers per run.
--- Both properties are needed — sorting on the right thing AND sorting stably.
+-- Both properties are needed, sorting on the right thing AND sorting stably.
 WHERE customer_unique_id IN (
         SELECT customer_unique_id
         FROM repeat_customers
@@ -208,7 +208,7 @@ ORDER BY customer_unique_id, order_seq;
 
 
 -- -----------------------------------------------------------------------------
--- Query 3 — Cumulative revenue by month within each state
+-- Query 3: Cumulative revenue by month within each state
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   How did each state's revenue accumulate through 2018, and what share of its
@@ -223,8 +223,8 @@ ORDER BY customer_unique_id, order_seq;
 --         with no ORDER BY, covers the whole partition and gives the denominator
 --
 --   Omitting ORDER BY is what makes the second one a partition-wide total. Adding
---   an ORDER BY would silently turn it back into a running total and the
---   percentage would be 100% on every row — a quietly wrong result that looks
+--   an ORDER BY would without warning turn it back into a running total and the
+--   percentage would be 100% on every row, a quietly wrong result that looks
 --   plausible.
 --
 --   A GROUP BY equivalent would need a self-join back onto the same aggregate to
@@ -272,7 +272,7 @@ ORDER BY customer_state, month;
 
 
 -- -----------------------------------------------------------------------------
--- Query 4 — How many sellers make up 80% of revenue?
+-- Query 4: How many sellers make up 80% of revenue?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Concentration was measured by decile in 01_ranking.sql. The sharper
@@ -286,7 +286,7 @@ ORDER BY customer_state, month;
 --   guessing thresholds.
 --
 --   ROW_NUMBER supplies the seller count at each point. The ORDER BY includes
---   seller_id as a tiebreak so the accumulation is deterministic — without it,
+--   seller_id as a tiebreak so the accumulation is deterministic, without it,
 --   sellers on identical revenue could reorder between runs and shift the
 --   reported counts.
 --
@@ -324,11 +324,11 @@ thresholds AS (
         -- previous row's cumulative share.
         --
         -- COALESCE(..., 0) is load-bearing. The first row has no predecessor, so
-        -- LAG returns NULL, and `NULL < 25` evaluates to NULL rather than true —
+        -- LAG returns NULL, and `NULL < 25` evaluates to NULL rather than true:
         -- meaning the row would NOT be selected. On this data the top seller
         -- holds only 1.7% so no threshold is crossed at row 1 and the bug stays
         -- invisible, but on a more concentrated marketplace the 25% row would
-        -- silently vanish from the report. Treating "no previous row" as 0%
+        -- without warning vanish from the report. Treating "no previous row" as 0%
         -- makes the comparison correct at the boundary.
         COALESCE(LAG(cumulative_pct) OVER (ORDER BY seller_rank), 0) AS prev_pct
     FROM pareto p
@@ -348,7 +348,7 @@ ORDER BY seller_rank;
 
 
 -- -----------------------------------------------------------------------------
--- Query 5 — FIRST_VALUE and LAST_VALUE, and why LAST_VALUE usually lies
+-- Query 5: FIRST_VALUE and LAST_VALUE, and why LAST_VALUE usually lies
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   For each state, compare its best and worst month of 2018 against each
@@ -361,10 +361,10 @@ ORDER BY seller_rank;
 --   LAST_VALUE(x) OVER (PARTITION BY s ORDER BY x) inherits the default frame,
 --   UNBOUNDED PRECEDING TO CURRENT ROW. The frame ends at the current row, so
 --   "the last value" is whatever the current row holds. It returns the current
---   row's own value on every row — an expensive way to write x.
+--   row's own value on every row, an expensive way to write x.
 --
 --   FIRST_VALUE happens to work with the default frame, because the frame's
---   start is genuinely the partition start. That asymmetry is precisely why the
+--   start is actually the partition start. That asymmetry is precisely why the
 --   bug is so easy to miss: half the query is right.
 --
 --   The fix is to state the full frame: ROWS BETWEEN UNBOUNDED PRECEDING AND
@@ -399,7 +399,7 @@ SELECT
                                      ORDER BY revenue DESC), 2)
         AS best_month_brl,
     -- BROKEN: default frame ends at the current row, so this just echoes
-    -- month_brl. Kept deliberately to make the failure visible.
+    -- month_brl. Kept intentionally to make the failure visible.
     ROUND(LAST_VALUE(revenue) OVER (PARTITION BY customer_state
                                     ORDER BY revenue DESC), 2)
         AS worst_month_broken,

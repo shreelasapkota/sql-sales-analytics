@@ -1,9 +1,9 @@
 -- =============================================================================
--- 05_joins.sql — Multi-table joins: delivery performance by seller and region
+-- 05_joins.sql: Multi-table joins: delivery performance by seller and region
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Run:    psql -d olist -f queries/05_joins.sql
---         (requires optimizations.sql to have been applied — Q3 joins
+--         (requires optimizations.sql to have been applied, Q3 joins
 --          geolocation_centroid rather than the raw geolocation table)
 --
 -- Conventions from 01_ranking.sql carry over: revenue is SUM(order_items.price),
@@ -11,7 +11,7 @@
 --
 -- HOW "LATE" IS DEFINED HERE, AND WHY IT MATTERS
 -- ----------------------------------------------
--- order_estimated_delivery_date is stored at MIDNIGHT for all 99,441 orders —
+-- order_estimated_delivery_date is stored at MIDNIGHT for all 99,441 orders:
 -- there is not a single non-zero time component in the column. It records a
 -- promised *day*, not a promised instant.
 --
@@ -22,7 +22,7 @@
 --   date comparison        delivered_customer_date::date > estimated::date
 --                          -> 6,534 late (6.77%)
 --
--- The gap is 1,292 orders — 16.5% of the apparent late total — that arrived ON
+-- The gap is 1,292 orders, 16.5% of the apparent late total, that arrived ON
 -- the promised day but after 00:00. Under the timestamp comparison an order
 -- promised for the 10th and delivered at 09:00 on the 10th is "late by 0 days",
 -- which is not a coherent thing to report.
@@ -44,7 +44,7 @@
 
 
 -- -----------------------------------------------------------------------------
--- Query 1 — Where do late deliveries concentrate?
+-- Query 1: Where do late deliveries concentrate?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Which seller states have the worst on-time delivery performance, and how
@@ -60,7 +60,7 @@
 --
 --   An earlier version used seller_id. That kept COUNT(DISTINCT order_id)
 --   correct, but an order split between two sellers in the SAME state produced
---   two rows — so its delivery time was averaged in twice while counting once.
+--   two rows, so its delivery time was averaged in twice while counting once.
 --   The rates were protected and the averages quietly were not.
 --
 --   Deduplicating at the grain the query actually reports on (state) fixes both
@@ -68,7 +68,7 @@
 --   every aggregate has to be individually defended.
 --
 --   An order spanning two DIFFERENT states still counts once per state, which is
---   intended — either state's logistics could have caused the delay.
+--   intended, either state's logistics could have caused the delay.
 -- -----------------------------------------------------------------------------
 \echo '=== Q1. Late delivery rate by seller state ==='
 
@@ -86,9 +86,9 @@ WITH order_delivery AS (
     JOIN order_items oi ON oi.order_id  = o.order_id
     JOIN sellers     s  ON s.seller_id  = oi.seller_id
     WHERE o.order_status = 'delivered'
-      -- Eight orders carry status 'delivered' with a NULL delivery date —
+      -- Eight orders carry status 'delivered' with a NULL delivery date:
       -- contradictory source data. A NULL comparison is neither true nor false,
-      -- so excluding them explicitly keeps the denominator honest rather than
+      -- so excluding them explicitly keeps the denominator plain rather than
       -- letting NULL semantics decide silently.
       AND o.order_delivered_customer_date IS NOT NULL
       AND o.order_estimated_delivery_date IS NOT NULL
@@ -109,7 +109,7 @@ ORDER BY pct_late DESC;
 
 
 -- -----------------------------------------------------------------------------
--- Query 2 — The fan-out trap: joining two child tables at once
+-- Query 2: The fan-out trap: joining two child tables at once
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   What did customers pay, and what did the merchandise cost? Both facts live
@@ -160,7 +160,7 @@ correct AS (
     FROM orders o
     JOIN items_per_order i ON i.order_id = o.order_id
     -- LEFT JOIN because not every order has a payment row; an inner join would
-    -- silently drop those orders from the item revenue total too.
+    -- quietly drop those orders from the item revenue total too.
     LEFT JOIN payments_per_order pp ON pp.order_id = o.order_id
     WHERE o.order_status = 'delivered'
 )
@@ -175,7 +175,7 @@ FROM correct;
 
 
 -- -----------------------------------------------------------------------------
--- Query 3 — Does distance explain late delivery?
+-- Query 3: Does distance explain late delivery?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Does the physical distance between seller and customer predict lateness?
@@ -187,8 +187,8 @@ FROM correct;
 --   1. THE GEOLOCATION GRAIN.
 --      Raw geolocation has ~53 rows per zip prefix. Joining it directly
 --      multiplies revenue by 154x (13.2M -> 2.03bn) and row count from 110,197
---      to 16,842,720. This query joins geolocation_centroid instead — one row
---      per zip, built by optimizations.sql — which makes the join 1:1 by
+--      to 16,842,720. This query joins geolocation_centroid instead, one row
+--      per zip, built by optimizations.sql, which makes the join 1:1 by
 --      construction. That is a correctness fix that happens to also be 3.2x
 --      faster; see optimization.md.
 --
@@ -204,14 +204,14 @@ FROM correct;
 --
 --   3. INCOMPLETE ZIP COVERAGE.
 --      Not every zip prefix appears in geolocation. LEFT JOIN is used and the
---      unmatched orders are COUNTED AND REPORTED rather than silently dropped —
+--      unmatched orders are COUNTED AND REPORTED rather than quietly dropped:
 --      264 orders have an unmapped customer zip and 217 an unmapped seller zip.
 --      An inner join would have quietly removed them, which is the same hidden
 --      self-selection Q4 warns about.
 --
 --   Distance uses the haversine formula, not a Pythagorean difference of
---   degrees. A degree of longitude is not a fixed distance — it shrinks towards
---   the poles — and Brazil spans 33 degrees of latitude, so the error would be
+--   degrees. A degree of longitude is not a fixed distance, it shrinks towards
+--   the poles, and Brazil spans 33 degrees of latitude, so the error would be
 --   large and systematically biased by region.
 -- -----------------------------------------------------------------------------
 \echo ''
@@ -263,7 +263,7 @@ ORDER BY distance_band;
 
 
 -- -----------------------------------------------------------------------------
--- Query 4 — Does late delivery actually cost us review scores?
+-- Query 4: Does late delivery actually cost us review scores?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Late deliveries are assumed to damage reviews. By how much, and is there any
@@ -275,7 +275,7 @@ ORDER BY distance_band;
 --   score per order stops multiply-reviewed orders being weighted twice.
 --
 --   LEFT JOIN, not INNER: not every order was reviewed. An inner join would
---   silently restrict the analysis to reviewed orders — a self-selecting
+--   quietly restrict the analysis to reviewed orders, a self-selecting
 --   population, and exactly the sort of hidden filter that makes a result
 --   confidently wrong. Unreviewed orders are counted in their own column.
 --
@@ -323,7 +323,7 @@ ORDER BY delivery_outcome;
 
 
 -- -----------------------------------------------------------------------------
--- Query 5 — Which sellers are the worst offenders?
+-- Query 5: Which sellers are the worst offenders?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Which high-volume sellers have the worst on-time record, and what revenue is

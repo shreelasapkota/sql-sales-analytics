@@ -1,5 +1,5 @@
 -- =============================================================================
--- 02_trend_analysis.sql — Month-over-month growth and moving averages
+-- 02_trend_analysis.sql: Month-over-month growth and moving averages
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Run:    psql -d olist -f queries/02_trend_analysis.sql
@@ -16,12 +16,12 @@
 -- 1. THE HEAD IS NOISE, AND ONE MONTH IS MISSING ENTIRELY.
 --      2016-09    1 delivered order        135 BRL
 --      2016-10  265 delivered orders    40,325 BRL
---      2016-11  NO ORDERS AT ALL — the month does not exist in the data
+--      2016-11  NO ORDERS AT ALL, the month does not exist in the data
 --      2016-12    1 delivered order         11 BRL
 --    Growth rates computed against a single 11 BRL order are meaningless.
 --
 -- 2. THE TAIL IS CENSORED BY DELIVERY LAG, NOT BY DEMAND.
---    2018-09 has 16 orders and 2018-10 has 4, but ZERO of them are delivered —
+--    2018-09 has 16 orders and 2018-10 has 4, but ZERO of them are delivered:
 --    the dataset was extracted before they completed. Charting those months
 --    shows revenue falling off a cliff, which is an artefact of the export date,
 --    not a business event. This is right-censoring, and the only honest
@@ -33,13 +33,13 @@
 
 
 -- -----------------------------------------------------------------------------
--- Query 1 — Why month-over-month growth needs a date spine
+-- Query 1: Why month-over-month growth needs a date spine
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   What was month-over-month revenue growth in the platform's first months?
 --
 -- WHY THIS TECHNIQUE
---   This query deliberately shows the WRONG answer alongside the right one,
+--   This query on purpose shows the WRONG answer alongside the right one,
 --   because the failure is silent and produces a plausible-looking number.
 --
 --   LAG() returns the previous ROW in the partition, not the previous MONTH. If
@@ -54,7 +54,7 @@
 -- HOW TO READ THE OUTPUT
 --   * 2016-11 appears only in the spine version. It is absent from the raw data.
 --   * naive_prev_month shows LAG's actual reference month. For 2016-12 it reads
---     2016-10 — two months back, labelled as "previous". That is the alignment
+--     2016-10, two months back, labelled as "previous". That is the alignment
 --     bug, and it is completely silent.
 --   * For 2016-12 the spine reports NULL rather than a percentage, because the
 --     true previous month is zero and growth from zero is undefined. NULLIF
@@ -62,7 +62,7 @@
 --
 --   TWO SEPARATE DEFECTS, ONLY ONE OF WHICH THE SPINE FIXES
 --   Note that spine_mom_pct still reports +1,025,573% for 2017-01. The spine did
---   not fix that, and was never going to: the reference month is now genuinely
+--   not fix that, and was never going to: the reference month is now really
 --   December, so the alignment is correct. The problem is that December holds a
 --   single 11 BRL order, so the denominator is tiny and the ratio explodes.
 --
@@ -123,7 +123,7 @@ ORDER BY c.month;
 
 
 -- -----------------------------------------------------------------------------
--- Query 2 — Month-over-month growth across the usable window
+-- Query 2: Month-over-month growth across the usable window
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   How fast is revenue growing month to month, and which months broke trend?
@@ -135,7 +135,7 @@ ORDER BY c.month;
 --   handling anyway and costs a second scan.
 --
 --   NULLIF guards the division: any month whose predecessor is zero would raise
---   a division-by-zero error, and NULLIF converts that to NULL — an honest
+--   a division-by-zero error, and NULLIF converts that to NULL, an honest
 --   "undefined" rather than a crash or a fake 0%.
 -- -----------------------------------------------------------------------------
 \echo ''
@@ -177,7 +177,7 @@ ORDER BY month;
 
 
 -- -----------------------------------------------------------------------------
--- Query 3 — Moving averages, and why ROWS and RANGE are not interchangeable
+-- Query 3: Moving averages, and why ROWS and RANGE are not interchangeable
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   What does the revenue trend look like once month-to-month noise is smoothed
@@ -199,7 +199,7 @@ ORDER BY month;
 --   back, outside the interval) and returns 20,168.
 --
 --   ROWS is used for the headline moving average below because the spine
---   guarantees no gaps, which makes position and date equivalent — and ROWS is
+--   guarantees no gaps, which makes position and date equivalent, and ROWS is
 --   cheaper, since RANGE with an interval must evaluate a bound per row.
 --   The lesson is that ROWS is only safe once you have guaranteed the gaps away.
 --
@@ -272,14 +272,14 @@ SELECT
          THEN ROUND(AVG(revenue) OVER w6, 2) END AS ma_6mo,
     -- Deviation from the PRIOR three months, not from a window containing the
     -- current month. The frame `ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING` stops
-    -- one row short of the current row, so the baseline is genuinely
+    -- one row short of the current row, so the baseline is really
     -- independent of the value being judged against it.
     --
     -- The earlier version used the ma_3mo frame, which includes the current
     -- month as one third of its own denominator. That structurally compresses
     -- every deviation: February 2017 grew +109.5% over January (see Q2) but
     -- scored only +35.4% against a baseline it was itself inflating, and
-    -- January 2017 scored exactly 0.0 — a value divided by itself, reading as
+    -- January 2017 scored exactly 0.0, a value divided by itself, reading as
     -- "perfectly on trend" when there was no trend data at all.
     CASE WHEN COUNT(*) OVER w_trailing = 3
          THEN ROUND(100.0 * (revenue - AVG(revenue) OVER w_trailing)
@@ -293,7 +293,7 @@ ORDER BY month;
 
 
 -- -----------------------------------------------------------------------------
--- Query 4 — Year-over-year growth
+-- Query 4: Year-over-year growth
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Is the business still growing once seasonality is removed, and is the rate
@@ -302,7 +302,7 @@ ORDER BY month;
 -- WHY THIS TECHNIQUE
 --   LAG takes an offset: LAG(revenue, 12) reads the row twelve positions back,
 --   which on a monthly spine is exactly the same month last year. This is the
---   standard way to strip seasonality — November's spike compares against the
+--   standard way to strip seasonality, November's spike compares against the
 --   previous November rather than against October.
 --
 --   The offset argument is only trustworthy BECAUSE of the spine. On the raw
@@ -310,7 +310,7 @@ ORDER BY month;
 --   as Q1, one step more dangerous, because a wrong YoY number looks reasonable.
 --
 --   LEAD is the mirror image and is included to show next month's actual result
---   alongside each row — useful for eyeballing whether a spike sustained.
+--   alongside each row, useful for eyeballing whether a spike sustained.
 --
 -- A BUG THIS QUERY ORIGINALLY HAD, KEPT HERE AS A WARNING
 --   The first version filtered `WHERE month >= '2018-01-01'` in the same SELECT
@@ -318,8 +318,8 @@ ORDER BY month;
 --
 --   The reason is the clause evaluation order: WHERE runs BEFORE window
 --   functions. The filter cut the input to 8 rows, and only then did LAG try to
---   look 12 rows back — past the start of the data. It returned NULL for every
---   row, silently, with no error.
+--   look 12 rows back, past the start of the data. It returned NULL for every
+--   row, quietly, with no error.
 --
 --   The fix is the `with_comparisons` CTE below: compute the window functions
 --   over the FULL 20-month series first, then filter the result in the outer
@@ -368,14 +368,14 @@ SELECT
     ROUND(next_month, 2)                 AS next_month_brl
 FROM with_comparisons
 -- The first 12 months have no prior year to compare against, so YoY is NULL by
--- definition. Filtering them out here — AFTER the window functions have run —
--- is safe, and more honest than printing a column of empty cells.
+-- definition. Filtering them out here, AFTER the window functions have run:
+-- is safe, and more fair than printing a column of empty cells.
 WHERE month >= '2018-01-01'
 ORDER BY month;
 
 
 -- -----------------------------------------------------------------------------
--- Query 5 — Which categories are gaining and losing momentum?
+-- Query 5: Which categories are gaining and losing momentum?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Comparing the most recent quarter against the same quarter a year earlier,
@@ -385,11 +385,11 @@ ORDER BY month;
 --   PARTITION BY category restarts the LAG sequence for every category, so one
 --   pass computes a per-category year-over-year comparison. Without partitioning,
 --   LAG would run off the end of one category and read the first row of the next,
---   silently comparing unrelated products.
+--   quietly comparing unrelated products.
 --
 --   Quarters are compared rather than single months to reduce noise: a small
 --   category can swing wildly month to month on a handful of orders. The
---   minimum-revenue filter exists for the same reason — percentage growth on a
+--   minimum-revenue filter exists for the same reason, percentage growth on a
 --   tiny base is technically correct and practically useless.
 -- -----------------------------------------------------------------------------
 \echo ''
@@ -410,7 +410,7 @@ WITH category_quarter AS (
       AND p.product_category_name IS NOT NULL
       -- Only the two quarters actually being compared are scanned. A single
       -- range from 2017-04 to 2018-07 would also read the four quarters in
-      -- between, aggregate them, and then discard them in the FILTER below —
+      -- between, aggregate them, and then discard them in the FILTER below:
       -- correct, but reading roughly three times the rows for no benefit.
       AND (   (o.order_purchase_timestamp >= '2017-04-01'
            AND o.order_purchase_timestamp <  '2017-07-01')
@@ -428,7 +428,7 @@ compared AS (
 )
 -- The business question asks which categories are growing AND which are
 -- shrinking. An earlier version ordered by growth descending with a LIMIT,
--- which made declining categories structurally unreachable — it could only ever
+-- which made declining categories structurally unreachable, it could only ever
 -- answer half its own question, and returned 15 rows of positive growth that
 -- looked like a complete picture. 13 categories did in fact decline.
 --

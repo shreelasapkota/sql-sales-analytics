@@ -1,5 +1,5 @@
 -- =============================================================================
--- schema.sql — Olist Brazilian E-Commerce analytics schema
+-- schema.sql: Olist Brazilian E-Commerce analytics schema
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Usage:  psql -d olist -f schema.sql
@@ -25,7 +25,7 @@ DROP TABLE IF EXISTS geolocation           CASCADE;
 
 
 -- -----------------------------------------------------------------------------
--- customers — one row per *order-placer*, not per person.
+-- customers: one row per *order-placer*, not per person.
 -- -----------------------------------------------------------------------------
 -- The single most misread table in this dataset. Olist issues a NEW customer_id
 -- for every order, so this table has exactly as many rows as `orders` (99,441).
@@ -54,7 +54,7 @@ COMMENT ON COLUMN customers.customer_unique_id IS
 
 
 -- -----------------------------------------------------------------------------
--- sellers — marketplace sellers who fulfil order items.
+-- sellers: the marketplace sellers who fulfil order items.
 -- -----------------------------------------------------------------------------
 -- Small (3,095 rows) but the anchor of all seller-performance ranking. Note that
 -- a single order can contain items from several sellers, so seller revenue is
@@ -73,15 +73,15 @@ COMMENT ON TABLE sellers IS
 
 
 -- -----------------------------------------------------------------------------
--- product_category_translation — Portuguese to English category names.
+-- product_category_translation: Portuguese to English category names.
 -- -----------------------------------------------------------------------------
 -- A lookup table, and an incomplete one: it covers 71 categories while products
 -- reference 73. `pc_gamer` and `portateis_cozinha_e_preparadores_de_alimentos`
 -- have no English name.
 --
--- This is why products.product_category_name has NO foreign key to this table --
+-- This is why products.product_category_name has NO foreign key to this table:
 -- declaring one would fail on those two categories. Queries LEFT JOIN here and
--- COALESCE to the Portuguese name. An INNER JOIN would silently delete those
+-- COALESCE to the Portuguese name. An INNER JOIN would quietly delete those
 -- products' revenue from every report.
 --
 -- Source file carries a UTF-8 BOM; the loader reads it with encoding utf-8-sig.
@@ -97,7 +97,7 @@ COMMENT ON TABLE product_category_translation IS
 
 
 -- -----------------------------------------------------------------------------
--- products — product dimensions and category assignment.
+-- products: product dimensions and category assignment.
 -- -----------------------------------------------------------------------------
 -- 610 of 32,951 products have no category and no descriptive measurements. That
 -- is a data fact, not a load error, so those columns are nullable. Ranking
@@ -121,20 +121,20 @@ CREATE TABLE products (
 );
 
 COMMENT ON TABLE  products IS
-    'Product catalogue. 610 rows have a NULL category — decide explicitly how to treat them.';
+    'Product catalogue. 610 rows have a NULL category. Decide explicitly how to treat them.';
 COMMENT ON COLUMN products.product_name_length IS
     'Renamed from the source CSV''s misspelled "product_name_lenght".';
 
 
 -- -----------------------------------------------------------------------------
--- orders — the order lifecycle, and the spine of every time-based query.
+-- orders: the order lifecycle. Spine of every time-based query.
 -- -----------------------------------------------------------------------------
 -- Five timestamps track an order from purchase to delivery. Only
 -- order_purchase_timestamp is guaranteed present; the rest are NULL whenever the
 -- order did not reach that stage. 2,965 orders never reached the customer.
 --
 -- Only 96,478 of 99,441 orders are 'delivered'. Revenue queries filter on status
--- deliberately, and delivery-time math must exclude NULL delivery dates rather
+-- on purpose, and delivery-time math must exclude NULL delivery dates rather
 -- than coercing them to zero.
 -- -----------------------------------------------------------------------------
 CREATE TABLE orders (
@@ -158,10 +158,10 @@ COMMENT ON COLUMN orders.order_delivered_customer_date IS
 
 
 -- -----------------------------------------------------------------------------
--- order_items — line items. THE revenue table.
+-- order_items: line items. THE revenue table.
 -- -----------------------------------------------------------------------------
 -- Grain: one row per item per order. order_item_id is a sequence within an order
--- (1, 2, 3...), NOT a global id — hence the composite primary key.
+-- (1, 2, 3...), NOT a global id, hence the composite primary key.
 --
 -- Revenue lives here, not in orders. `price` is per unit of that line, and
 -- `freight_value` is shipping apportioned to the line. Item revenue is
@@ -182,13 +182,13 @@ CREATE TABLE order_items (
 );
 
 COMMENT ON TABLE  order_items IS
-    'Line items — the revenue grain. One row per item per order. 112,650 rows.';
+    'Line items, the revenue grain. One row per item per order. 112,650 rows.';
 COMMENT ON COLUMN order_items.order_item_id IS
     'Sequence within an order (1..n), not a global identifier.';
 
 
 -- -----------------------------------------------------------------------------
--- order_payments — how each order was paid for.
+-- order_payments: how each order was paid for.
 -- -----------------------------------------------------------------------------
 -- One order may split across several payment methods (voucher + credit card),
 -- so payment_sequential numbers them and forms half the primary key.
@@ -211,11 +211,11 @@ COMMENT ON TABLE order_payments IS
 
 
 -- -----------------------------------------------------------------------------
--- order_reviews — customer satisfaction, 1 to 5.
+-- order_reviews: customer satisfaction, 1 to 5.
 -- -----------------------------------------------------------------------------
 -- review_id is NOT unique: 99,224 rows carry only 98,410 distinct review_ids.
 -- The pair (review_id, order_id) IS unique, so it is the primary key. Assuming
--- review_id alone was the key would fail the load outright — which is exactly
+-- review_id alone was the key would fail the load outright, which is exactly
 -- how this was caught.
 --
 -- 98,673 distinct orders are reviewed, so a few orders have multiple reviews.
@@ -234,15 +234,15 @@ CREATE TABLE order_reviews (
 );
 
 COMMENT ON TABLE order_reviews IS
-    'Review scores 1-5. review_id alone is NOT unique — PK is (review_id, order_id).';
+    'Review scores 1-5. review_id alone is NOT unique, PK is (review_id, order_id).';
 
 
 -- -----------------------------------------------------------------------------
--- geolocation — zip prefix to latitude/longitude.
+-- geolocation: zip prefix to latitude/longitude.
 -- -----------------------------------------------------------------------------
--- Deliberately has NO primary key. 1,000,163 rows cover only 19,015 distinct zip
+-- On purpose has NO primary key. 1,000,163 rows cover only 19,015 distinct zip
 -- prefixes, and 261,831 rows are exact duplicates. That is the raw data, loaded
--- faithfully rather than silently deduplicated.
+-- faithfully rather than quietly deduplicated.
 --
 -- Trap: joining this straight onto customers multiplies every customer row by
 -- ~53 and inflates revenue by the same factor. Always aggregate to one row per

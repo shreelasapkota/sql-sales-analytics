@@ -1,5 +1,5 @@
 -- =============================================================================
--- 01_ranking.sql — Top-N analysis with RANK, DENSE_RANK, ROW_NUMBER and NTILE
+-- 01_ranking.sql: Top-N analysis with RANK, DENSE_RANK, ROW_NUMBER and NTILE
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Run:    psql -d olist -f queries/01_ranking.sql
@@ -18,9 +18,9 @@
 --
 -- Categories   Joined via LEFT JOIN to product_category_translation and wrapped
 --              in COALESCE. The lookup covers 71 of the 73 categories actually
---              in use — `pc_gamer` and
+--              in use, `pc_gamer` and
 --              `portateis_cozinha_e_preparadores_de_alimentos` have no English
---              name. An INNER JOIN here would silently delete those products
+--              name. An INNER JOIN here would quietly delete those products
 --              from every ranking rather than showing them untranslated.
 --
 -- A NOTE ON WHY THESE ARE WINDOW FUNCTIONS AND NOT GROUP BY
@@ -39,17 +39,17 @@
 
 
 -- -----------------------------------------------------------------------------
--- Query 1 — Which of RANK, DENSE_RANK and ROW_NUMBER should a top-N use?
+-- Query 1: Which of RANK, DENSE_RANK and ROW_NUMBER should a top-N use?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
---   In telephony, what are the best-selling products by units — and does the
+--   In telephony, what are the best-selling products by units, and does the
 --   choice of ranking function change who appears in a "top 5" list?
 --
 -- WHY THIS TECHNIQUE
 --   All three functions are shown side by side on the same partition because
 --   they differ only when values tie, and this category really does tie twice
 --   inside the top 8: two products at 68 units, and two more at 53. Ranking a
---   top-N list with the wrong function silently drops a legitimate result, so
+--   top-N list with the wrong function quietly drops a legitimate result, so
 --   the choice is a correctness decision, not a stylistic one.
 --
 -- HOW TO READ THE OUTPUT
@@ -68,7 +68,7 @@
 --   DENSE_RANK  ties share a rank, and the next value never skips
 --
 --   The practical consequence: "top 5 by ROW_NUMBER" cuts the list at 59 units
---   and returns only one of the two products tied at 53 — and *which* one is
+--   and returns only one of the two products tied at 53, and *which* one is
 --   not deterministic between runs. Use ROW_NUMBER only when you need exactly N
 --   rows and an arbitrary tiebreak is acceptable; use RANK or DENSE_RANK when
 --   tied rows deserve equal billing.
@@ -96,7 +96,7 @@ SELECT
     LEFT(product_id, 8)          AS product,
     units_sold,
     ROUND(revenue, 2)            AS revenue_brl,
-    -- ROW_NUMBER gets an explicit tiebreak; RANK and DENSE_RANK deliberately do
+    -- ROW_NUMBER gets an explicit tiebreak; RANK and DENSE_RANK by design do
     -- not. See the note below on why they differ.
     ROW_NUMBER() OVER (ORDER BY units_sold DESC, product_id) AS row_number,
     RANK()       OVER (ORDER BY units_sold DESC)             AS rank,
@@ -126,7 +126,7 @@ LIMIT 8;
 
 
 -- -----------------------------------------------------------------------------
--- Query 2 — Top 5 products in every category
+-- Query 2: Top 5 products in every category
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Which products drive revenue in each category? Merchandising needs the
@@ -136,8 +136,8 @@ LIMIT 8;
 -- WHY THIS TECHNIQUE
 --   DENSE_RANK with PARTITION BY category restarts the ranking for every
 --   category in one pass over the data. DENSE_RANK rather than ROW_NUMBER so
---   genuinely tied products both appear; that means a category can return more
---   than five rows, which is the honest answer rather than an arbitrary cut.
+--   truly tied products both appear; that means a category can return more
+--   than five rows, which is the plain answer rather than an arbitrary cut.
 --
 --   The ranking is computed in a CTE and filtered in the outer query because
 --   WHERE runs BEFORE window functions are evaluated. Referring to
@@ -161,7 +161,7 @@ WITH product_revenue AS (
     LEFT JOIN product_category_translation t
            ON t.product_category_name = p.product_category_name
     WHERE o.order_status = 'delivered'
-      -- 610 products carry no category at all. They are excluded deliberately:
+      -- 610 products carry no category at all. They are excluded by design:
       -- a "top products per category" report has no category to place them in.
       AND p.product_category_name IS NOT NULL
     GROUP BY 1, 2
@@ -203,7 +203,7 @@ ORDER BY r.category, r.revenue_rank;
 
 
 -- -----------------------------------------------------------------------------
--- Query 3 — Top 3 sellers in each state
+-- Query 3: Top 3 sellers in each state
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Who are the leading sellers in each Brazilian state, and how much of that
@@ -269,7 +269,7 @@ ORDER BY state_revenue DESC, state_rank;
 
 
 -- -----------------------------------------------------------------------------
--- Query 4 — The single best-selling category in each state
+-- Query 4: The single best-selling category in each state
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   What does each state buy most? Regional demand differences drive inventory
@@ -331,7 +331,7 @@ LIMIT 12;
 
 
 -- -----------------------------------------------------------------------------
--- Query 5 — How concentrated is revenue across sellers?
+-- Query 5: How concentrated is revenue across sellers?
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Is marketplace revenue spread evenly across sellers, or does a small group

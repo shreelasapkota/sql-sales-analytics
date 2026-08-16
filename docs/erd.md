@@ -15,8 +15,8 @@ erDiagram
     sellers ||--o{ order_items : "fulfilled by"
 
     customers {
-        char32 customer_id PK "99,441 — one per ORDER"
-        char32 customer_unique_id "96,096 — the actual person"
+        char32 customer_id PK "99,441, one per ORDER"
+        char32 customer_unique_id "96,096, the actual person"
         char5 customer_zip_code_prefix "CHAR not INT: leading zeros"
         text customer_city
         char2 customer_state
@@ -63,7 +63,7 @@ erDiagram
 
     products {
         char32 product_id PK "32,951"
-        text product_category_name "NULL for 610 — no FK"
+        text product_category_name "NULL for 610, no FK"
         smallint product_name_length "renamed from 'lenght'"
         integer product_description_length
         smallint product_photos_qty
@@ -86,7 +86,7 @@ erDiagram
     }
 
     geolocation {
-        char5 geolocation_zip_code_prefix "NO PK — 1,000,163 rows"
+        char5 geolocation_zip_code_prefix "NO PK, 1,000,163 rows"
         float geolocation_lat
         float geolocation_lng
         text geolocation_city
@@ -94,7 +94,7 @@ erDiagram
     }
 
     geolocation_centroid {
-        char5 zip PK "19,015 — materialized view"
+        char5 zip PK "19,015, materialized view"
         float lat
         float lng
         bigint source_rows
@@ -103,17 +103,17 @@ erDiagram
 
 ## What the diagram does not show, and why it matters
 
-Three relationships exist in the data but are deliberately **not** enforced as
+Three relationships exist in the data but are on purpose **not** enforced as
 foreign keys. Each absence is a decision, not an oversight.
 
 **`products.product_category_name` → `product_category_translation`**
 Cannot be a foreign key: products reference 73 categories and the lookup covers
 71. `pc_gamer` and `portateis_cozinha_e_preparadores_de_alimentos` have no
 English name, so the constraint would fail on load. Queries use `LEFT JOIN` +
-`COALESCE`; an inner join would silently delete those products' revenue.
+`COALESCE`; an inner join would quietly delete those products' revenue.
 
 **`customers`/`sellers` zip → `geolocation`**
-`geolocation` has no unique key to reference — it holds ~53 rows per zip prefix.
+`geolocation` has no unique key to reference, it holds ~53 rows per zip prefix.
 Coverage is also incomplete: 476 delivered orders have a zip absent from the
 table. Joins go through `geolocation_centroid` instead, which is unique by
 construction.
@@ -126,7 +126,7 @@ See `optimization.md` for the measurement that justified it.
 
 `customers ||--o{ orders` reads as "one customer places many orders", which is
 how this schema *looks*. In practice Olist issues a **new `customer_id` for every
-order**, so the relationship is effectively 1:1 — 99,441 customers, 99,441
+order**, so the relationship is effectively 1:1, 99,441 customers, 99,441
 orders.
 
 The real one-to-many is `customer_unique_id → orders`, and that column is not a

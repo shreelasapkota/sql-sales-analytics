@@ -1,5 +1,5 @@
 -- =============================================================================
--- 04_ctes.sql — Common table expressions, recursive and non-recursive
+-- 04_ctes.sql: Common table expressions, recursive and non-recursive
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Run:    psql -d olist -f queries/04_ctes.sql
@@ -11,7 +11,7 @@
 -- --------------------------
 -- A non-recursive CTE is a named subquery. It buys readability, not speed. Since
 -- PostgreSQL 12 a plain CTE is normally INLINED into the surrounding query, so
--- it optimises exactly like a subquery would — it is not a temporary table and
+-- it optimises exactly like a subquery would, it is not a temporary table and
 -- it is not automatically materialised.
 --
 -- That matters in both directions:
@@ -19,7 +19,7 @@
 --   * A CTE referenced MANY times may be re-computed each time. If the CTE is
 --     expensive, MATERIALIZED forces it to run once.
 --
--- Before PostgreSQL 12, CTEs were always materialised — an "optimisation fence"
+-- Before PostgreSQL 12, CTEs were always materialised, an "optimisation fence"
 -- that people exploited deliberately. Code written against that assumption can
 -- change behaviour on upgrade. Interviewers like this question because it
 -- separates people who have read the release notes from people who have not.
@@ -31,14 +31,14 @@
 
 
 -- -----------------------------------------------------------------------------
--- Query 1 — Customer lifetime value
+-- Query 1: Customer lifetime value
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   What is a customer actually worth over their whole relationship with us, and
 --   how much of total revenue comes from people who came back?
 --
 -- WHY THIS TECHNIQUE
---   The calculation has three distinct stages — resolve orders to people, roll
+--   The calculation has three distinct stages, resolve orders to people, roll
 --   those up per person, then summarise the population. Layered CTEs give each
 --   stage a name, so the query reads top to bottom in the order you would
 --   explain it aloud. Written as nested subqueries it would be three levels deep
@@ -49,7 +49,7 @@
 --
 -- THE TRAP THAT DEFINES THIS QUERY
 --   Olist issues a NEW customer_id for every single order. There are 99,441
---   customer_id values and 99,441 orders — one apiece.
+--   customer_id values and 99,441 orders, one apiece.
 --
 --   Group by customer_id and every customer appears to have ordered exactly
 --   once. Lifetime value collapses to average order value, repeat rate reads as
@@ -117,7 +117,7 @@ FROM per_customer_id;
 
 
 -- -----------------------------------------------------------------------------
--- Query 2 — Segmenting customers by value
+-- Query 2: Segmenting customers by value
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   How is customer value distributed, and is retention spend justified?
@@ -127,15 +127,15 @@ FROM per_customer_id;
 --   argument for CTEs: the stages are reusable building blocks rather than a
 --   monolithic query.
 --
---   NTILE is deliberately NOT used here. Quintiles would force five equal-sized
+--   NTILE is on purpose NOT used here. Quintiles would force five equal-sized
 --   buckets and hide the real shape of this distribution, where the overwhelming
 --   majority sit in one group. Explicit value bands describe the population
---   honestly, even though the buckets come out wildly uneven — which is itself
+--   plainly, even though the buckets come out wildly uneven, which is itself
 --   the finding.
 --
 --   NOTE ON MATERIALIZED, AND WHY IT IS *NOT* USED HERE
 --   An earlier version of this query marked the first CTE AS MATERIALIZED,
---   justified by a comment saying it was "referenced twice". It is not — each
+--   justified by a comment saying it was "referenced twice". It is not, each
 --   CTE below is referenced exactly once, in a straight chain:
 --       order_revenue -> per_person -> segmented -> final SELECT
 --
@@ -198,7 +198,7 @@ ORDER BY segment;
 
 
 -- -----------------------------------------------------------------------------
--- Query 3 — Recursive CTE: rolling revenue up a geographic hierarchy
+-- Query 3: Recursive CTE: rolling revenue up a geographic hierarchy
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Brazilian postcodes are hierarchical: the leading digits narrow from a broad
@@ -208,7 +208,7 @@ ORDER BY segment;
 -- WHY A RECURSIVE CTE
 --   The hierarchy is a prefix tree. A 5-digit prefix like 01001 sits under 0100,
 --   which sits under 010, under 01, under 0. Each level is the parent of the
---   next, and the tree is built by walking down one digit at a time — a node's
+--   next, and the tree is built by walking down one digit at a time, a node's
 --   children cannot be known without first knowing the node.
 --
 --   That parent-child descent is what WITH RECURSIVE exists for. The anchor term
@@ -224,14 +224,14 @@ ORDER BY segment;
 --           (LEFT(zip,4)), (zip)
 --       )
 --
---   Recursion genuinely earns its place when depth is UNKNOWN or VARIABLE — an
---   org chart, a bill of materials, a threaded comment tree — because those
+--   Recursion really earns its place when depth is UNKNOWN or VARIABLE, an
+--   org chart, a bill of materials, a threaded comment tree, because those
 --   cannot be written as a fixed list of grouping sets at all.
 --
 --   It is worth being able to say this out loud. Reaching for recursion when a
 --   simpler construct fits is a common way to make a query harder to maintain
 --   than it needs to be. It is used here because the file must demonstrate the
---   technique, and because the same shape genuinely applies to variable-depth
+--   technique, and because the same shape really applies to variable-depth
 --   trees.
 --
 -- TWO POSTGRESQL CONSTRAINTS THAT SHAPE THIS QUERY
@@ -304,7 +304,7 @@ national AS (
     -- An earlier version used `SUM(revenue) FILTER (WHERE depth = 1) OVER ()`
     -- in the final SELECT. A window function sees only the rows that survived
     -- WHERE, and the filter below keeps exactly one depth-1 node, so the
-    -- "national total" silently became that single node's revenue and every
+    -- "national total" without any error became that single node's revenue and every
     -- percentage was inflated. Node 0 reported 100.00% of the nation when its
     -- true share is 21.29%.
     SELECT SUM(revenue) AS total_revenue FROM zip_leaf
@@ -322,8 +322,8 @@ CROSS JOIN national n
 -- Follow ONE branch from the root down to depth 4, so the parent-child
 -- relationship is visible and verifiable: 0 -> 01 -> 011 -> 0110..0115.
 --
--- Depth 5 is deliberately excluded from this display. An earlier version
--- included it under a LIMIT 25, which truncated the leaf set mid-level — the
+-- Depth 5 is on purpose excluded from this display. An earlier version
+-- included it under a LIMIT 25, which truncated the leaf set mid-level, the
 -- visible children then summed to less than their parent and the rollup looked
 -- broken when it was merely cut off. Showing complete levels is the difference
 -- between a demonstration and a misleading one.
@@ -337,20 +337,20 @@ ORDER BY r.depth, r.revenue DESC;
 
 
 -- -----------------------------------------------------------------------------
--- Query 4 — Verifying the rollup actually balances
+-- Query 4: Verifying the rollup actually balances
 -- -----------------------------------------------------------------------------
 -- BUSINESS QUESTION
 --   Does every level of the hierarchy sum to the same national total?
 --
 -- WHY THIS TECHNIQUE
---   A hierarchical rollup that does not balance is silently wrong, and a
+--   A hierarchical rollup that does not balance is without any error wrong, and a
 --   partially-wrong total is far more damaging than an obviously broken one.
 --   Every depth aggregates the SAME leaf revenue through a different grouping,
 --   so all five totals must be identical.
 --
 --   This is a correctness assertion expressed as a query, and it is the kind of
 --   check worth writing whenever the join condition is anything cleverer than
---   equality — here `LEFT(z.zip, t.depth) = t.node`, which is easy to get subtly
+--   equality, here `LEFT(z.zip, t.depth) = t.node`, which is easy to get subtly
 --   wrong and hard to eyeball.
 -- -----------------------------------------------------------------------------
 \echo ''

@@ -1,19 +1,19 @@
 -- =============================================================================
--- optimizations.sql — Objects added after measuring, not before
+-- optimizations.sql: Objects added after measuring, not before
 -- =============================================================================
 -- Target: PostgreSQL 17
 -- Usage:  psql -d olist -f optimizations.sql   (run after constraints.sql)
 --
 -- Everything here was added because a measurement justified it. Two other
--- indexes were built, measured, found unused, and dropped — that story is in
--- optimization.md, and the DDL for them is deliberately NOT here.
+-- indexes were built, measured, found unused, and dropped, that story is in
+-- optimization.md, and the DDL for them is on purpose NOT here.
 --
 -- Run optimization.md's before/after yourself by dropping these and re-timing.
 -- =============================================================================
 
 
 -- -----------------------------------------------------------------------------
--- 1. geolocation_centroid — one row per zip prefix
+-- 1. geolocation_centroid, one row per zip prefix
 -- -----------------------------------------------------------------------------
 -- geolocation holds 1,000,163 rows for 19,015 zip prefixes, roughly 53 rows
 -- each, with 261,831 exact duplicates. Every query needing coordinates had to
@@ -45,14 +45,14 @@ GROUP BY 1;
 CREATE UNIQUE INDEX idx_geo_centroid_zip ON geolocation_centroid (zip);
 
 COMMENT ON MATERIALIZED VIEW geolocation_centroid IS
-    'One row per zip prefix. Join this, never geolocation directly — the raw table fans out ~53x.';
+    'One row per zip prefix. Join this, never geolocation directly, the raw table fans out ~53x.';
 
 
 -- -----------------------------------------------------------------------------
 -- 2. customers.customer_unique_id
 -- -----------------------------------------------------------------------------
 -- customer_unique_id is the real person identifier and is used by every
--- retention, lifetime-value and repeat-purchase query, but it had no index —
+-- retention, lifetime-value and repeat-purchase query, but it had no index:
 -- only customer_id (the primary key) did.
 --
 -- For a SELECTIVE lookup (one customer out of 96,096) this is the difference
@@ -61,7 +61,7 @@ COMMENT ON MATERIALIZED VIEW geolocation_centroid IS
 --
 -- Note this index does NOT help the population-wide LTV aggregation in
 -- 04_ctes.sql, which reads every customer anyway. Indexes accelerate selective
--- access, not full scans — see optimization.md.
+-- access, not full scans, see optimization.md.
 -- -----------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_customers_unique_id
     ON customers (customer_unique_id);

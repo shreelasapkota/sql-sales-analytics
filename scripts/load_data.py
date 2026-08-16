@@ -22,7 +22,7 @@ Rows are streamed to PostgreSQL with COPY ... FROM STDIN rather than INSERT.
 COPY uses a single bulk path into the table and writes far less WAL than
 1.4M individual INSERTs, which is the difference between seconds and minutes.
 
-The CSVs are never committed to git — they are ~126 MB, dominated by the 61 MB
+The CSVs are never committed to git. At ~126 MB, dominated by the 61 MB
 geolocation file. This script is the reproducible way to obtain them.
 """
 
@@ -51,14 +51,14 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql:///olist")
 
 # Kaggle requires authentication, so we pull from a public HuggingFace mirror.
 # This mirror was verified file-by-file against the canonical Kaggle row counts
-# (see EXPECTED_ROWS) before being adopted — that check runs on every load.
+# (see EXPECTED_ROWS) before being adopted. That check runs on every load.
 MIRROR_BASE = (
     "https://huggingface.co/datasets/"
     "aviahYadler/Olist_Ecommerce_Dataset/resolve/main"
 )
 
 # Canonical row counts from the original Kaggle release. The load fails loudly
-# if any table does not match, so a truncated download or a silently changed
+# if any table does not match, so a truncated download or a without warning changed
 # mirror can never masquerade as a successful load.
 EXPECTED_ROWS = {
     "customers": 99_441,
@@ -119,7 +119,7 @@ TABLES = [
     ),
     Table(
         # This CSV is written with a UTF-8 BOM. Read as plain utf-8 the first
-        # header becomes "﻿product_category_name" and the lookup silently
+        # header becomes "﻿product_category_name" and the lookup without warning
         # produces NULLs, so it is decoded as utf-8-sig.
         "product_category_translation",
         "product_category_name_translation",
@@ -217,7 +217,7 @@ def csv_to_copy_buffer(table: Table) -> tuple[io.StringIO, int]:
        the `products` typo is corrected without editing the source file.
     2. Empty strings become \\N (the COPY NULL marker). Left as-is, an empty
        field would be loaded as the empty string, and `''::numeric` fails
-       outright — this is what makes the 610 category-less products and the
+       outright, this is what makes the 610 category-less products and the
        2,965 undelivered orders load correctly as NULL.
 
     The reshaped data is buffered in memory. At 126 MB that is comfortable and
@@ -315,7 +315,7 @@ def load(skip_download: bool = False) -> None:
         print("\nCommitted.")
     except Exception:
         conn.rollback()
-        print("\nLoad failed — transaction rolled back, database left unchanged.")
+        print("\nLoad failed, transaction rolled back, database left unchanged.")
         raise
     finally:
         conn.close()
